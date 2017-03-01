@@ -30,8 +30,6 @@ import com.iflytek.cloud.SpeechConstant;
 import com.iflytek.cloud.SpeechError;
 import com.iflytek.cloud.SpeechRecognizer;
 import com.iflytek.cloud.SpeechSynthesizer;
-import com.iflytek.cloud.SpeechUnderstander;
-import com.iflytek.cloud.SpeechUnderstanderListener;
 import com.iflytek.cloud.SpeechUtility;
 import com.iflytek.cloud.SynthesizerListener;
 import com.iflytek.cloud.TextUnderstander;
@@ -39,8 +37,6 @@ import com.iflytek.cloud.TextUnderstanderListener;
 import com.iflytek.cloud.UnderstanderResult;
 import com.iflytek.cloud.VoiceWakeuper;
 import com.iflytek.cloud.WakeuperListener;
-import com.iflytek.cloud.WakeuperResult;
-import com.iflytek.cloud.util.ResourceUtil;
 import com.iflytek.inputmethod.asr.vad.VadEngine;
 import com.iflytek.util.IflyRecorder;
 import com.iflytek.util.IflyRecorderListener;
@@ -61,8 +57,9 @@ import com.tcl.myapplication.bean.DatetimeBean;
 import com.tcl.myapplication.bean.MainBean;
 import com.tcl.myapplication.bean.ResultBean;
 import com.tcl.myapplication.bean.SlotsBean;
-
+import com.tcl.myapplication.listener.OnSerialPortDataListener;
 import com.tcl.myapplication.util.JsonParserNew;
+import com.tcl.myapplication.util.SerialManager;
 import com.tcl.myapplication.view.WaveformView;
 
 import org.json.JSONException;
@@ -101,7 +98,7 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
     Button btnPause;
     @Bind(R.id.activity_main)
     LinearLayout activityMain;
-
+    private boolean mIsWakeUp = false;
     private Handler handler = new Handler(new Handler.Callback() {
         @Override
         public boolean handleMessage(final Message msg) {
@@ -115,9 +112,6 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
     SpeechSynthesizer mSpeechSynthesizer;
     SynthesizerListener mSynthesizerListener;
     SpeechRecognizer mSpeechRecognizer;
-
-    SpeechUnderstander mSpeechUnderstander;
-    SpeechUnderstanderListener mSpeechUnderstanderListener;
     TextUnderstander mTextUnderstander;
     TextUnderstanderListener mTextUnderstanderListener;
     private Toast mToast;
@@ -143,12 +137,45 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
     private MainBean mMainBean;//Json值
     public static String SRResult = "";    //识别结果
     public static boolean service_flag = false;//表示是否在一项服务中
-    MediaPlayer mActiveMediaPlayer;
-    MediaPlayer mInactiveMediaPlayer;
     private final static String ACTIVESOUND = "AlfredActiveSound.wav";
     private final static String INACTIVESOUND = "AlfredInactiveSound.wav";
-    AssetFileDescriptor mActiveSoundFileDescriptor;
-    AssetFileDescriptor mInActiveSoundFileDescriptor;
+    OnSerialPortDataListener mOnSerialPortDataListener = new OnSerialPortDataListener() {
+        @Override
+        public void OnNewData(byte[] data) {
+            for (int i = 0; i < data.length; i++) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "data[i]:" + data[i]);
+            }
+            if (data[0] == 1) {
+                showTips("唤醒成功!");
+                playActiveSound();
+                statusWake.setText("您的阿福助手已经唤醒成功");
+                statusWake.setBackgroundColor(Color.parseColor("#00ff00"));
+                mWaveFormView.setmWaveColor(Color.parseColor("#00ff00"));
+                mVoiceWakeuper.stopListening();
+                mIsWakeUp = true;
+            }
+            if (data[0] == 4) {
+
+                showTips("休眠成功!");
+                statusWake.setBackgroundColor(Color.parseColor("#ffffff"));
+                statusWake.setText("已睡眠");
+            }
+        }
+
+        @Override
+        public void OnError(Exception e) {
+
+        }
+    };
+
+    private void showTips(final String s) {
+        MainActivity.this.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(MainActivity.this, s + "MainActivity", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -159,14 +186,23 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
         SpeechUtility.createUtility(MainActivity.this, SpeechConstant.APPID + "=5896c658");
         mVoiceWakeuper = VoiceWakeuper.createWakeuper(MainActivity.this, null);
         mSpeechRecognizer = SpeechRecognizer.createRecognizer(MainActivity.this, mInitListener);
-
-        initWakeUpParam();
+        findViewById(R.id.sleep).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                SerialManager.getInstance(MainActivity.this).sleep();
+            }
+        });
         initSpeechSynthesizerParam();
         setSpeechRecognizerParam();
         setTextUnderstandParam();
         initContinuousSpeechRecognized();
         initUI();
+//        CrashHandler crashHandler = CrashHandler.getInstance();
+//        crashHandler.init(this);  //传入参数必须为Activity，否则AlertDialog将不显示。
+        SerialManager.getInstance(this).refreshDeviceList(mOnSerialPortDataListener);
+
     }
+
 
     private void initUI() {
         mSentimentRecyclerAdapter = new SentimentRecyclerAdapter(this, mHistory);
@@ -202,15 +238,14 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
         @Override
         public void onError(SpeechError speechError) {
             if (speechError.getErrorCode() == 10118) {
+                statusWake.setBackgroundColor(Color.parseColor("#ffffff"));
+                statusWake.setText("已睡眠");
                 //报错10118 检测到未说话，从新开始一次
-//                setSpeechRecognizerParam();
-//                mSpeechRecognizer.startListening(mRecognizerListener);
-//                setIsRunning(true);
+
                 Toast.makeText(MainActivity.this, "未听到您说话。", Toast.LENGTH_SHORT).show();
                 playInactiveSound();
-                stopRecognized();
-                initWakeUpParam();
-            } else {
+//                initWakeUpParam();
+
 
             }
 
@@ -398,13 +433,13 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
         try {
             AssetFileDescriptor mInActiveSoundFileDescriptor = getAssets().openFd(INACTIVESOUND);
             mInactiveMediaPlayer.setDataSource(mInActiveSoundFileDescriptor.getFileDescriptor(), mInActiveSoundFileDescriptor.getStartOffset(), mInActiveSoundFileDescriptor.getLength());
-
             mInactiveMediaPlayer.prepare();
             mInactiveMediaPlayer.start();
             mInactiveMediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
                 @Override
                 public void onCompletion(MediaPlayer mp) {
                     stopRecognized();
+                    SerialManager.getInstance(MainActivity.this).sleep();
                 }
             });
         } catch (IOException e) {
@@ -412,79 +447,79 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
         }
     }
 
-    private void initWakeUpParam() {
-        if (mVoiceWakeuper != null) {
-            if (mVoiceWakeuper.isListening()) {
-                mVoiceWakeuper.stopListening();
-                mVoiceWakeuper.cancel();
-                mVoiceWakeuper.destroy();
-                mVoiceWakeuper = null;
-            }
-        }
-        if (mWakeuperListener != null) {
-            mWakeuperListener = null;
-        }
-        mVoiceWakeuper = VoiceWakeuper.createWakeuper(MainActivity.this, null);
-        //1.加载唤醒词资源，resPath为唤醒资源路径
-        StringBuffer param = new StringBuffer();
-        String resPath = ResourceUtil.generateResourcePath(this, ResourceUtil.RESOURCE_TYPE.assets, "ivw/5896c658.jet");
-        param.append(ResourceUtil.IVW_RES_PATH + "=" + resPath);
-        param.append("," + ResourceUtil.ENGINE_START + "=" + SpeechConstant.ENG_IVW);
-        SpeechUtility.getUtility().setParameter(ResourceUtil.ENGINE_START, param.toString());
-//2.创建VoiceWakeuper对象
-
-//3.设置唤醒参数，详见《科大讯飞MSC API手册(Android)》SpeechConstant类
-//唤醒门限值，根据资源携带的唤醒词个数按照“id:门限;id:门限”的格式传入
-        mVoiceWakeuper.setParameter(SpeechConstant.IVW_THRESHOLD, "0:" + 50);
-//设置当前业务类型为唤醒
-        mVoiceWakeuper.setParameter(SpeechConstant.IVW_SST, "wakeup");
-//设置唤醒一直保持，直到调用stopListening，传入0则完成一次唤醒后，会话立即结束（默认0）
-        mVoiceWakeuper.setParameter(SpeechConstant.KEEP_ALIVE, "1");
-
-        mVoiceWakeuper.setParameter(SpeechConstant.IVW_SST, "oneshot");
-        mVoiceWakeuper.setParameter(SpeechConstant.ENGINE_TYPE, "cloud");
-
-        mWakeuperListener = new WakeuperListener() {
-            @Override
-            public void onBeginOfSpeech() {
-
-            }
-
-            @Override
-            public void onResult(WakeuperResult wakeuperResult) {
-                playActiveSound();
-                statusWake.setText("您的阿福助手已经唤醒成功");
-                statusWake.setBackgroundColor(Color.parseColor("#00ff00"));
-                mWaveFormView.setmWaveColor(Color.parseColor("#00ff00"));
-
-                mVoiceWakeuper.stopListening();
-
-            }
-
-            @Override
-            public void onError(SpeechError speechError) {
-                Toast.makeText(MainActivity.this, speechError.getPlainDescription(true), Toast.LENGTH_SHORT).show();
-
-            }
-
-            @Override
-            public void onEvent(int i, int i1, int i2, Bundle bundle) {
-
-            }
-
-            @Override
-            public void onVolumeChanged(int i) {
-
-            }
-        };
-        mVoiceWakeuper.startListening(mWakeuperListener);
-    }
+//    private void initWakeUpParam() {
+//        if (mVoiceWakeuper != null) {
+//            if (mVoiceWakeuper.isListening()) {
+//                mVoiceWakeuper.stopListening();
+//                mVoiceWakeuper.cancel();
+//
+//                mVoiceWakeuper = null;
+//            }
+//        }
+//        if (mWakeuperListener != null) {
+//            mWakeuperListener = null;
+//        }
+//        mVoiceWakeuper = VoiceWakeuper.createWakeuper(MainActivity.this, null);
+//        //1.加载唤醒词资源，resPath为唤醒资源路径
+//        StringBuffer param = new StringBuffer();
+//        String resPath = ResourceUtil.generateResourcePath(this, ResourceUtil.RESOURCE_TYPE.assets, "ivw/5896c658.jet");
+//        param.append(ResourceUtil.IVW_RES_PATH + "=" + resPath);
+//        param.append("," + ResourceUtil.ENGINE_START + "=" + SpeechConstant.ENG_IVW);
+//        SpeechUtility.getUtility().setParameter(ResourceUtil.ENGINE_START, param.toString());
+////2.创建VoiceWakeuper对象
+//
+////3.设置唤醒参数，详见《科大讯飞MSC API手册(Android)》SpeechConstant类
+////唤醒门限值，根据资源携带的唤醒词个数按照“id:门限;id:门限”的格式传入
+//        mVoiceWakeuper.setParameter(SpeechConstant.IVW_THRESHOLD, "0:" + 50);
+////设置当前业务类型为唤醒
+//        mVoiceWakeuper.setParameter(SpeechConstant.IVW_SST, "wakeup");
+////设置唤醒一直保持，直到调用stopListening，传入0则完成一次唤醒后，会话立即结束（默认0）
+//        mVoiceWakeuper.setParameter(SpeechConstant.KEEP_ALIVE, "1");
+//
+//        mVoiceWakeuper.setParameter(SpeechConstant.IVW_SST, "oneshot");
+//        mVoiceWakeuper.setParameter(SpeechConstant.ENGINE_TYPE, "cloud");
+//
+//        mWakeuperListener = new WakeuperListener() {
+//            @Override
+//            public void onBeginOfSpeech() {
+//                if (BuildConfig.DEBUG) Log.d(TAG, "唤醒开始");
+//            }
+//
+//            @Override
+//            public void onResult(WakeuperResult wakeuperResult) {
+//                playActiveSound();
+//                statusWake.setText("您的阿福助手已经唤醒成功");
+//                statusWake.setBackgroundColor(Color.parseColor("#00ff00"));
+//                mWaveFormView.setmWaveColor(Color.parseColor("#00ff00"));
+//
+//                mVoiceWakeuper.stopListening();
+//                mIsWakeUp = true;
+//            }
+//
+//            @Override
+//            public void onError(SpeechError speechError) {
+//                if (BuildConfig.DEBUG) Log.d(TAG, "唤醒失败" + speechError.getErrorDescription());
+//
+//                mIsWakeUp = false;
+//            }
+//
+//            @Override
+//            public void onEvent(int i, int i1, int i2, Bundle bundle) {
+//
+//            }
+//
+//            @Override
+//            public void onVolumeChanged(int i) {
+//
+//            }
+//        };
+//        mVoiceWakeuper.startListening(mWakeuperListener);
+//    }
 
     @Override
     protected void onResume() {
         super.onResume();
         mWakeLock.acquire();
-
     }
 
     @Override
@@ -499,6 +534,7 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
 
         mSpeechRecognizer.cancel();
         mSpeechRecognizer.destroy();
+        SerialManager.getInstance(this).onDestory();
     }
 
     private void startRecognized() {
@@ -513,7 +549,7 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
                 AudioFormat.ENCODING_PCM_16BIT,
                 MediaRecorder.AudioSource.MIC);
         IflyRecorder.getInstance().startRecoder(this);
-        if (!mSpeechRecognizer.isListening()) {
+        if (mSpeechRecognizer.isListening()) {
             mSpeechRecognizer.stopListening();
         }
         mSpeechRecognizer.startListening(mRecognizerListener);
@@ -529,9 +565,12 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
         mIsUserEnd = true;
         if (mSpeechRecognizer != null) {
             mSpeechRecognizer.stopListening();
+            mSpeechRecognizer.destroy();
             mSpeechRecognizer.cancel();
         }
         IflyRecorder.getInstance().stopRecorder();
+
+
     }
 
 
@@ -907,7 +946,7 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
                 if (getIsRunning()) {
                     byte[] data = mRecordQueue.poll();
                     if (data == null) {
-                        Log.d(TAG, "no---no data");
+
                         try {
                             Thread.sleep(5);
                         } catch (InterruptedException e) {
@@ -962,4 +1001,6 @@ public class MainActivity extends AppCompatActivity implements IflyRecorderListe
                 break;
         }
     }
+
+
 }
