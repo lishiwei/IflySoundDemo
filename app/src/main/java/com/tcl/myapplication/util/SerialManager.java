@@ -36,6 +36,10 @@ import io.reactivex.functions.Function;
 import io.reactivex.schedulers.Schedulers;
 
 public class SerialManager {
+
+    // TODO: 2017/3/13
+    //后续需要做设备的扫描
+
     private static SerialManager instance;
     private ProgressDialog mProgressDialog;
     private UsbManager mUsbManager;
@@ -47,6 +51,9 @@ public class SerialManager {
     private OnSerialPortDataListener mOnSerialPortDataListener;
     private PendingIntent mPermissionIntent;
     UsbDevice mUsbDevice;
+    public static final String  CLOSEACTION = "com.tcl.myapplication.close";
+    public static final String  OPENACTION = "com.tcl.myapplication.open";
+    public static final String  DATA = "com.tcl.myapplication.data";
     private SerialInputOutputManager.Listener mListener = new SerialInputOutputManager.Listener() {
         @Override
         public void onNewData(byte[] data) {
@@ -55,7 +62,6 @@ public class SerialManager {
 
         @Override
         public void onRunError(Exception e) {
-            Log.d(TAG, "onRunError: " + e.toString());
             mOnSerialPortDataListener.OnError(e);
         }
     };
@@ -65,7 +71,7 @@ public class SerialManager {
         if (mContext == null) {
             mContext = context;
         }
-        mProgressDialog = new ProgressDialog(mContext);
+
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
         mContext.registerReceiver(mUsbPermissionActionReceiver, filter);
         mPermissionIntent = PendingIntent.getBroadcast(mContext, 0, new Intent(ACTION_USB_PERMISSION), 0);
@@ -78,7 +84,7 @@ public class SerialManager {
             return;
         }
         try {
-            byte[] a = {3};
+            byte[] a = {3,1,0,0};
             int i = 0;
             i = mUsbSerialPort.write(a, 10000);
             Log.d(TAG, "sleep: " + i);
@@ -101,6 +107,10 @@ public class SerialManager {
         new AsyncTask<Void, Void, List<UsbSerialPort>>() {
             @Override
             protected List<UsbSerialPort> doInBackground(Void... params) {
+                if (mUsbManager==null)
+                {
+                    return null;
+                }
                 final List<UsbSerialDriver> drivers =
                         UsbSerialProber.getDefaultProber().findAllDrivers(mUsbManager);
 
@@ -117,7 +127,7 @@ public class SerialManager {
 
             @Override
             protected void onPostExecute(List<UsbSerialPort> result) {
-                if (0 >= result.size()) {
+                if (result==null||0 >= result.size()) {
                     return;
                 }
                 mUsbSerialPort = result.get(0);
@@ -131,6 +141,7 @@ public class SerialManager {
 
 
     public void onDestory() {
+        sleep();
         stopIoManager();
         if (mUsbSerialPort != null) {
             try {
@@ -159,7 +170,14 @@ public class SerialManager {
         if (mProgressDialog != null) {
             mProgressDialog = null;
         }
-        mContext.unregisterReceiver(mUsbPermissionActionReceiver);
+        try {
+
+            mContext.unregisterReceiver(mUsbPermissionActionReceiver);
+        }catch (IllegalArgumentException e)
+        {
+            e.printStackTrace();
+        }
+
     }
 
     private void tryGetUsbPermission() {
@@ -168,6 +186,7 @@ public class SerialManager {
         for (final UsbDevice usbDevice : mUsbManager.getDeviceList().values()) {
             //add some conditional check if necessary
             //if(isWeCaredUsbDevice(usbDevice)){
+
             mUsbDevice = usbDevice;
             if (mUsbManager.hasPermission(usbDevice)) {
                 //if has already got permission, just goto connect it
@@ -184,8 +203,10 @@ public class SerialManager {
 
     private void afterGetUsbPermission(UsbDevice usbDevice) {
         //call method to set up device communication
+
         Toast.makeText(mContext, String.valueOf("Found USB device: VID=" + usbDevice.getVendorId() + " PID=" + usbDevice.getProductId()), Toast.LENGTH_SHORT).show();
-        Log.d(TAG, "afterGetUsbPermission: ");
+            Log.d(TAG, "Found USB device: VID=" + usbDevice.getVendorId() + " PID=" + usbDevice.getProductId());
+
         doYourOpenUsbDevice(usbDevice);
     }
 
@@ -195,7 +216,7 @@ public class SerialManager {
         initUsbSerialPort(usbDevice);
     }
 
-    public UsbSerialPort getUsbSerial(OnSerialPortDataListener onSerialPortDataListener) {
+    private UsbSerialPort getUsbSerial(OnSerialPortDataListener onSerialPortDataListener) {
 
 
         Flowable.fromIterable(UsbSerialProber.getDefaultProber().findAllDrivers(mUsbManager)).map(new Function<UsbSerialDriver, List<UsbSerialPort>>() {
@@ -248,9 +269,12 @@ public class SerialManager {
         });
         return null;
     }
-
-    public void initUsbSerialPort(UsbDevice usbDevice) {
-        UsbDeviceConnection connection = null;
+    UsbDeviceConnection connection = null;
+    private void initUsbSerialPort(UsbDevice usbDevice) {
+        if (connection!=null)
+        {
+            connection = null;
+        }
         try {
             connection = mUsbManager.openDevice(usbDevice);
         } catch (Exception e) {
@@ -268,13 +292,13 @@ public class SerialManager {
             mUsbSerialPort.setParameters(9600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
         } catch (IOException e) {
             Log.d(TAG, "initUsbSerialPort: Error opening device:" + e.toString());
-            Toast.makeText(mContext, "Error opening device: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            try {
-                mUsbSerialPort.close();
-            } catch (IOException e2) {
-                e2.printStackTrace();
-            }
-            mUsbSerialPort = null;
+
+//            try {
+//                mUsbSerialPort.close();
+//            } catch (IOException e2) {
+//                e2.printStackTrace();
+//            }
+//            mUsbSerialPort = null;
             return;
         }
         onDeviceStateChange();
@@ -294,12 +318,6 @@ public class SerialManager {
             mSerialIoManager = new SerialInputOutputManager(mUsbSerialPort, mListener);
             mExecutor.submit(mSerialIoManager);
         }
-        ((AppCompatActivity)mContext).runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(mContext, "串口初始化成功", Toast.LENGTH_SHORT).show();
-            }
-        });
     }
 
     private void onDeviceStateChange() {
@@ -318,8 +336,11 @@ public class SerialManager {
                     UsbDevice usbDevice = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         //user choose YES for your previously popup window asking for grant perssion for this usb device
-                        if (null != usbDevice) {
+                        if (null != usbDevice&&usbDevice!=mUsbDevice) {
                             afterGetUsbPermission(usbDevice);
+                        }
+                        else {
+                            Toast.makeText(mContext, "Already Open This Deviceaaaaa", Toast.LENGTH_SHORT).show();
                         }
                     } else {
                         //user choose NO for your previously popup window asking for grant perssion for this usb device

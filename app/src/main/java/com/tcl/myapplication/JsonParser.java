@@ -4,6 +4,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
 /**
  * Json结果解析类
  */
@@ -20,7 +24,7 @@ public class JsonParser {
 				// 转写结果词，默认使用第一个结果
 				JSONArray items = words.getJSONObject(i).getJSONArray("cw");
 				JSONObject obj = items.getJSONObject(0);
-				ret.append(obj.getString("w"));
+				ret.append(StringFilter(obj.getString("w")));
 //				如果需要多候选结果，解析数组其他字段
 //				for(int j = 0; j < items.length(); j++)
 //				{
@@ -33,7 +37,15 @@ public class JsonParser {
 		} 
 		return ret.toString();
 	}
-	
+	// 过滤特殊字符
+	public static String StringFilter(String str) throws PatternSyntaxException {
+// 只允许字母和数字 // String regEx ="[^a-zA-Z0-9]";
+// 清除掉所有特殊字符
+	String regEx="[`~!@#$%^&*()+=|{}':;',\\[\\].<>/?~！@#￥%……&*（）——+|{}【】‘；：”“’。，、？]";
+	Pattern p = Pattern.compile(regEx);
+	Matcher m = p.matcher(str);
+	return m.replaceAll("").trim();
+}
 	public static String parseGrammarResult(String json, String engType) {
 		StringBuffer ret = new StringBuffer();
 		try {
